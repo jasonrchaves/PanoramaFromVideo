@@ -111,7 +111,7 @@ vector<String> img_names;
 bool preview = false;
 bool try_cuda = false;
 bool try_ocl = false;
-double work_megapix = 0.1;  //seems to affect warping time/mem usage
+double work_megapix = 0.3;  //seems to affect warping time/mem usage
 double seam_megapix = 0.01;
 double compose_megapix = -1;
 float conf_thresh = 0.75;
@@ -141,7 +141,8 @@ int min_segment_size = 5;  //a segment must have > min_segment_size number of fr
 bool force = false;
 bool all_frames = false;
 bool skip_ba = false;
-bool reduce_frames = false;
+bool reduce_frames = true;
+bool just_show_segments = false;
 
 static int parseCmdArgs(int argc, char** argv)
 {
@@ -354,9 +355,13 @@ static int parseCmdArgs(int argc, char** argv)
         {
             skip_ba = true;
         }
-        else if (string(argv[i]) == "--reduce_frames")
+        else if (string(argv[i]) == "--skip_reduce_frames")
         {
-            reduce_frames = true;
+            reduce_frames = false;
+        }
+        else if (string(argv[i]) == "--just_show_segments")
+        {
+            just_show_segments = true;
         }
         else if (video_name.empty())  //only expect one input video file
         {
@@ -553,7 +558,7 @@ struct by_overlap {
 };
 
 
-void ReduceFramesByOverlap(vector<Mat> & images, vector<Mat> & frames, vector<Mat> & feature_frames , vector<ImageFeatures> & features , vector<MatchesInfo> & pairwise_matches){
+void ReduceFramesByOverlap(vector<Mat> & frames, vector<Mat> & feature_frames , vector<ImageFeatures> & features , vector<MatchesInfo> & pairwise_matches){
 
     tuple<int,int,float> empty_tuple (0,0, 0.);
     vector<tuple<int,int,float>> ordered_overlaps (pairwise_matches.size() , empty_tuple);
@@ -638,7 +643,7 @@ void ReduceFramesByOverlap(vector<Mat> & images, vector<Mat> & frames, vector<Ma
     std::sort(ordered_overlaps.begin() , ordered_overlaps.end() , by_overlap());
 
 
-    float min_overlap = 0.98; //i.e. 98% of area
+    float min_overlap = 0.99; //i.e. 99% of area
     vector<bool> remove_frames (feature_frames.size() , false);
 
     for (int i = 0; i < ordered_overlaps.size(); i++){
@@ -648,7 +653,8 @@ void ReduceFramesByOverlap(vector<Mat> & images, vector<Mat> & frames, vector<Ma
 
         if (!remove_frames[idx1] && !remove_frames[idx2]){//I.e. if both frames have not already been set to be removed
             
-            float score = (contrast_measure(feature_frames[idx1]) - contrast_measure(feature_frames[idx2]))/1e8 + (num_frames_matched[idx1] - num_frames_matched[idx2])/std::min(num_frames_matched[idx1], num_frames_matched[idx2]);
+            //float score = (contrast_measure(feature_frames[idx1]) - contrast_measure(feature_frames[idx2]))/1e8 + (num_frames_matched[idx1] - num_frames_matched[idx2])/std::min(num_frames_matched[idx1], num_frames_matched[idx2]);
+            float score = (num_frames_matched[idx1] - num_frames_matched[idx2])/std::min(num_frames_matched[idx1], num_frames_matched[idx2]);
             //int remove_idx = ( contrast_measure(feature_frames[idx1]) < contrast_measure(feature_frames[idx2]) ) ? idx1 : idx2 ;
             int remove_idx = (score < 0) ? idx1 : idx2;
             remove_frames[remove_idx] = true;
@@ -666,7 +672,6 @@ void ReduceFramesByOverlap(vector<Mat> & images, vector<Mat> & frames, vector<Ma
 
     for (int i = frames.size() - 1 ; i >= 0; i--){ //need to go backwards when removing elements to keep indices the same
         if (remove_frames[i]){
-            images.erase(images.begin() + i);
             frames.erase(frames.begin() + i);
             feature_frames.erase(feature_frames.begin() + i);
             features.erase(features.begin() + i);
@@ -677,14 +682,7 @@ void ReduceFramesByOverlap(vector<Mat> & images, vector<Mat> & frames, vector<Ma
         features[i].img_idx = i;
     }
 
-    cout << "Remaining # of Frames: " << frames.size() << endl;
-    namedWindow("Reduced Frames");
-    for (int i = 0; i < frames.size(); i++){
-        imshow("Reduced Frames", frames[i]);
-        waitKey(10*1000);
-    }
-    destroyWindow("Reduced Frames");
-
+    //cout << "Remaining # of Frames: " << frames.size() << endl;
 }
 
 
@@ -694,8 +692,8 @@ void ReduceFramesByOverlap(vector<Mat> & images, vector<Mat> & frames, vector<Ma
 
 
 // Function Prototypes
-void TryToStitchVideoSegment(vector<Mat> frames , vector<ImageFeatures> features , vector<MatchesInfo> pairwise_matches, int segment_id);
-Mat CreatePanorama(vector<Mat> frames , vector<ImageFeatures> features , vector<MatchesInfo> pairwise_matches);
+void TryToStitchVideoSegment(vector<Mat> frames , vector<Mat> feature_frames , vector<ImageFeatures> features , vector<MatchesInfo> pairwise_matches, int segment_id);
+Mat CreatePanorama(vector<Mat> & frames , vector<ImageFeatures> & features , vector<MatchesInfo> & pairwise_matches);
 
 
 
@@ -842,7 +840,7 @@ int main(int argc, char* argv[])
 
         (*finder)(img, features[i]);
         features[i].img_idx = i;
-        LOGLN("Features in image #" << i+1 << ": " << features[i].keypoints.size());
+        //LOGLN("Features in image #" << i+1 << ": " << features[i].keypoints.size());
 
         feature_frames.push_back(img.clone());
 
@@ -874,7 +872,16 @@ int main(int argc, char* argv[])
 
     LOGLN("Finding features, time: " << ((getTickCount() - t) / getTickFrequency()) << " sec");
 
-    LOG("Pairwise matching");
+    LOGLN("Pairw        //cout << "features.size()*num_params_per_cam_ = " << features.size()*num_params_per_cam_ << "  pairwise_matches.size()*num_errs_per_measurement_ = " << pairwise_matches.size()*num_errs_per_measurement_ << endl;
+
+        //cout << "Approx. Bytes allocated by CvLevMarq = " << (8*4 * features.size()*num_params_per_cam_ +
+            8*3*features.size()*num_params_per_cam_*features.size()*num_params_per_cam_ +
+            1*features.size()*num_params_per_cam_ +
+            8*features.size()*num_params_per_cam_ * num_errs_per_measurement_*pairwise_matches.size() + 
+            8*pairwise_matches.size()*num_errs_per_measurement_) << endl;
+
+        //cout << num_params_per_cam_ << "  " << num_errs_per_measurement_ << endl;
+ise matching...");
 #if ENABLE_LOG
     t = getTickCount();
 #endif
@@ -926,16 +933,18 @@ int main(int argc, char* argv[])
         }
         destroyWindow("Segments");
     }
-
-    //return 0;
+    
+    if (just_show_segments)
+        return 0;
 
     if (all_frames){
-        TryToStitchVideoSegment(original_frames , features, pairwise_matches, 0);
+        TryToStitchVideoSegment(original_frames , feature_frames , features, pairwise_matches, 0);
     }else{
 
         if (skip_to_segment == 0) {
             for (int i = 0; i < connected_components.size(); i++){
                 TryToStitchVideoSegment(SubVector<Mat>(original_frames , connected_components[i]) , 
+                                        SubVector<Mat>(feature_frames , connected_components[i]) ,
                                         SubVector<ImageFeatures>(features, connected_components[i]) , 
                                         GetPairwiseMatchesSubset(pairwise_matches , connected_components[i]) , i);
             }
@@ -948,6 +957,7 @@ int main(int argc, char* argv[])
                     if (seg_counter == skip_to_segment){
                         result_name_counter = seg_counter;
                         TryToStitchVideoSegment(SubVector<Mat>(original_frames , connected_components[i]) , 
+                                        SubVector<Mat>(feature_frames , connected_components[i]) ,
                                         SubVector<ImageFeatures>(features, connected_components[i]) , 
                                         GetPairwiseMatchesSubset(pairwise_matches , connected_components[i]) , i);
                         break;
@@ -968,27 +978,62 @@ int main(int argc, char* argv[])
 
 
 
-void TryToStitchVideoSegment(vector<Mat> frames , vector<ImageFeatures> features , vector<MatchesInfo> pairwise_matches , int segment_id){ //Do NOT take in argument reference (ie &) because I will be changing frames in this fn
+void TryToStitchVideoSegment(vector<Mat> frames , vector<Mat> feature_frames , vector<ImageFeatures> features , vector<MatchesInfo> pairwise_matches , int segment_id){ //Do NOT take in argument reference (ie &) because I will be changing frames in this fn
     //Here, I have one video segment that I want to make into a panorama
     //But, I want to do the stitching in a partitioned way if there are too many frames to start
-   
+  
+    int64 t;
+
+    if (reduce_frames){
+        //This will reduce frames based on windowed matching info, but the reduction should be faster
+        //Might as well make the reduction less aggressive too, made min_overlap 0.99
+        //This will greatly speed up the N^2 matching for FoV calculation and the rest of the process
+        cout << "Reducing # of frames based on overlap" << endl;
+        cout << "Original Number of Frames: " << frames.size() << endl;
+        t = getTickCount();
+        ReduceFramesByOverlap(frames, feature_frames , features, pairwise_matches);
+        cout << "Reduced Number of Frames: " << frames.size() << endl << endl;
+        cout << "Frame Reduction, time: " << ((getTickCount() - t) / getTickFrequency()) << " sec" << endl;
+        //cout << "Done." << endl << endl;
+        namedWindow("Reduced Frames");
+        for (int i = 0; i < frames.size(); i++){
+            imshow("Reduced Frames", frames[i]);
+            waitKey(500);
+        }
+        destroyWindow("Reduced Frames");
+        
+        //If there's a problem with not many of the reduced frames being in the same
+        //connected component, ie all matched, when making the panorama
+        //You could try increasing the --work_megapix param, to increase features found
+    }
+
+
+
+
 
     // I would also like to check that this whole video segment has a large enough field-of-view to be
     // worthy or being made into a panorama
     // For that I will need feature matching for just this video segment
     // I can try to use the matched feature image coordinate distance idea I had 
 
-    if (!force) {
-        //vector<MatchesInfo> pairwise_matches;
-        pairwise_matches.clear();  //Since I actually just re-calculate it later in CreatePanorama()
-        BestOf2NearestMatcher matcher(try_cuda, match_conf);
-        matcher(features, pairwise_matches);  //Need to do full N^2 matching for field-of-view
-        matcher.collectGarbage();
+    //vector<MatchesInfo> pairwise_matches;
+    cout << "Re-matching Segment (possibly after Frame Reduction)..." << endl;
+    t = getTickCount();
+    pairwise_matches.clear();  //Since I actually just re-calculate it later in CreatePanorama()
+    BestOf2NearestMatcher matcher(try_cuda, match_conf);
+    matcher(features, pairwise_matches);  //Need to do full N^2 matching for field-of-view
+    matcher.collectGarbage();
+    cout << "Re-matching, time: " << ((getTickCount() - t) / getTickFrequency()) << " sec" << endl;
 
-        //Go through each matched feature, and find the max difference in image position
-        //for a pair of matched features whose homography error is less than 5 or 10 pixels
+    //Go through each matched feature, and find the max difference in image position
+    //for a pair of matched features whose homography error is less than 5 or 10 pixels
+    if (!force) {
+        cout << "Checking Field-of-View..." << endl; 
+        t = getTickCount();
+
 
         double field_of_view = CalculateFieldOfView(features, pairwise_matches);
+        cout << "Field-of-View Check, time: " << ((getTickCount() - t) / getTickFrequency()) << " sec" << endl;
 
         //Uncomment the following 2 lines to just see the field of view measure for the different segments
         //cout << "field of view measure = " << field_of_view << endl;
@@ -1046,9 +1091,8 @@ void TryToStitchVideoSegment(vector<Mat> frames , vector<ImageFeatures> features
 }
 
 
-Mat CreatePanorama(vector<Mat> frames , vector<ImageFeatures> features , vector<MatchesInfo> pairwise_matches){
-    //Should do feature finding and matching again, treat this like a new stitching problem
-    //I already have the frames, but I need to do feature finding and matching again
+Mat CreatePanorama(vector<Mat> & frames , vector<ImageFeatures> & features , vector<MatchesInfo> & pairwise_matches){
+
 
 
     int num_images = static_cast<int>(frames.size());
@@ -1184,40 +1228,6 @@ Mat CreatePanorama(vector<Mat> frames , vector<ImageFeatures> features , vector<
 
 
 
-    if (reduce_frames){
-        //This may need to affect both frames and feature frames, but not sure how to do that
-        //dumb way is to do the above work, reduce frames, and then repeat the above work after the reduction in frames
-        //so as to properly reset frames and feature_frames
-        //Or I can just send feature_frames to ReduceFramesByOverlap for the homography and overlap stuff
-        //and don't change the features[i].img_idx attributes, and have some code here after the function call
-        //to clean up the frames and features and feature_frames vectors based on the surviving .img_idx's
-        //and try to do the same for pairwise_matches (but that hasn't worked before, so could just re-do matching)
-        //which wouldn't be so bad since the number of frames should be greatly reduced
-        cout << "Reducing # of frames based on overlap" << endl;
-        ReduceFramesByOverlap(images, frames, feature_frames, features, pairwise_matches);
-        cout << "Done." << endl << endl;
-        //actually, the full N^2 matching done in TryToStitchVideoSegment for the FoV calculation will be passed here
-        //so ReduceFramesByOverlap will work on the full N^2 matching and will not need multiple passes
-        //I will still need to re-do matching here if my subset function doesn't work
-        //and I might as well make it full N^2 matching since the number of frames will be so reduced
-
-
-        num_images = static_cast<int>(frames.size());
-        if (num_images < 2)
-        {
-            LOGLN("Need more images");
-            return Mat();
-        }
-
-        // Need to make a temp local version of this for code below
-        // Overrides the global img_names which is needed in parse_args and main
-        img_names.clear();
-        img_names.resize(num_images);
-        for(int i = 0; i < num_images; i++)
-            img_names[i] = "Temp Frame " + to_string(i);
-
-    }
-
 
 
     //Lower thresholds for reduced frame segment
@@ -1239,8 +1249,8 @@ Mat CreatePanorama(vector<Mat> frames , vector<ImageFeatures> features , vector<
     //LOGLN("Pairwise matching, time: " << ((getTickCount() - t) / getTickFrequency()) << " sec");
 
     //vector<MatchesInfo> pairwise_matches;
-    pairwise_matches.clear();
-    BestOf2NearestMatcher matcher(try_cuda, match_conf);
+    //pairwise_matches.clear();
+    //BestOf2NearestMatcher matcher(try_cuda, match_conf);
     //Mat matchMask(features.size(),features.size(),CV_8U,Scalar(0));
     //int match_window_size = 10;
     //for (int i = 0; i < num_images; ++i){
@@ -1254,8 +1264,8 @@ Mat CreatePanorama(vector<Mat> frames , vector<ImageFeatures> features , vector<
 
 
     //matcher(features, pairwise_matches, matchMask);
-    matcher(features, pairwise_matches);
-    matcher.collectGarbage();
+    //matcher(features, pairwise_matches);
+    //matcher.collectGarbage();
 
 
 
@@ -1279,6 +1289,7 @@ Mat CreatePanorama(vector<Mat> frames , vector<ImageFeatures> features , vector<
 
 
     if (!force) {
+        cout << "Checking Camera Motion Model...";
         //jchaves
         //Calculate Homography from feature matches, compare homography transformation to matched feature location
         int num_points_used = 0;
@@ -1361,17 +1372,18 @@ Mat CreatePanorama(vector<Mat> frames , vector<ImageFeatures> features , vector<
 
 
             //waitKey(); //needs user input , don't need if break stmt above
+
         }
 
         average_point_error /= num_points_used;
-        cout << endl << endl << "The average point error is " << average_point_error << endl << endl << endl;
+        cout << endl << "The average point error is " << average_point_error << endl;
         if (average_point_error > 0.5) {
             cout << "A segment was found to have improper camera motion for stitching" << endl;
             return Mat();
         }
         
         
-
+        //cout << "Done." << endl;
         ////////////////////////////////////////
     }
     
@@ -1453,7 +1465,7 @@ Mat CreatePanorama(vector<Mat> frames , vector<ImageFeatures> features , vector<
         //that the camera only rotate about its optical center, or that the scene photographed is far and planar so as to approximate that
         //May be interesting to look at .t of these camera matrices, if it is filled, to see if the images are good for stitching? 
         cameras[i].R = R;  //In the above convertTo call, the Mat R is the output of the conversion, so set cameras[i].R to it here
-        LOGLN("Initial intrinsics #" << indices[i]+1 << ":\n" << cameras[i].K());
+        //LOGLN("Initial intrinsics #" << indices[i]+1 << ":\n" << cameras[i].K());
         //LOGLN("Rotation matrix #" << indices[i] + 1 << ":\n" << cameras[i].R);
         //LOGLN("Translation matrix #" << indices[i] + 1 << ":\n" << cameras[i].t); //assumed, and therefore set, to zeros
         //This reports the intrinsic matrix K, which should be independent of the Rotation from the coordinate system origin,
@@ -1486,15 +1498,6 @@ Mat CreatePanorama(vector<Mat> frames , vector<ImageFeatures> features , vector<
         //Sometimes, can get an out of memory error if too much is given to the bundle adjustment
         //idk if it's based just on the number of frames, or maybe the number of features, or matches, or whatever else
         //I wonder if this can be skipped or something since the video uses the same camera (although maybe more than K is important)
-        cout << "features.size()*num_params_per_cam_ = " << features.size()*num_params_per_cam_ << "  pairwise_matches.size()*num_errs_per_measurement_ = " << pairwise_matches.size()*num_errs_per_measurement_ << endl;
-
-        cout << "Approx. Bytes allocated by CvLevMarq = " << (8*4 * features.size()*num_params_per_cam_ +
-            8*3*features.size()*num_params_per_cam_*features.size()*num_params_per_cam_ +
-            1*features.size()*num_params_per_cam_ +
-            8*features.size()*num_params_per_cam_ * num_errs_per_measurement_*pairwise_matches.size() + 
-            8*pairwise_matches.size()*num_errs_per_measurement_) << endl;
-
-        //cout << num_params_per_cam_ << "  " << num_errs_per_measurement_ << endl;
         //The pairwise_matches.size() obv changes significantly with match_conf, so maybe that's what gets too large and cause memory error
         if (!(*adjuster)(features, pairwise_matches, cameras))  //camera parameters adjusted from initial guess by bundle adjustment
         {
@@ -1513,7 +1516,7 @@ Mat CreatePanorama(vector<Mat> frames , vector<ImageFeatures> features , vector<
     vector<double> focals;
     for (size_t i = 0; i < cameras.size(); ++i)
     {
-        LOGLN("Camera #" << indices[i]+1 << ":\n" << cameras[i].K());
+        //LOGLN("Camera #" << indices[i]+1 << ":\n" << cameras[i].K());
         focals.push_back(cameras[i].focal);
     }
 
@@ -1709,7 +1712,7 @@ Mat CreatePanorama(vector<Mat> frames , vector<ImageFeatures> features , vector<
 
     for (int img_idx = 0; img_idx < num_images; ++img_idx)
     {
-        LOGLN("Compositing image #" << indices[img_idx]+1);
+        //LOGLN("Compositing image #" << indices[img_idx]+1);
 
         // Read image and resize it if necessary
         //full_img = imread(img_names[img_idx]);
