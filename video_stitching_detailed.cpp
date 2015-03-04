@@ -872,16 +872,7 @@ int main(int argc, char* argv[])
 
     LOGLN("Finding features, time: " << ((getTickCount() - t) / getTickFrequency()) << " sec");
 
-    LOGLN("Pairw        //cout << "features.size()*num_params_per_cam_ = " << features.size()*num_params_per_cam_ << "  pairwise_matches.size()*num_errs_per_measurement_ = " << pairwise_matches.size()*num_errs_per_measurement_ << endl;
-
-        //cout << "Approx. Bytes allocated by CvLevMarq = " << (8*4 * features.size()*num_params_per_cam_ +
-            8*3*features.size()*num_params_per_cam_*features.size()*num_params_per_cam_ +
-            1*features.size()*num_params_per_cam_ +
-            8*features.size()*num_params_per_cam_ * num_errs_per_measurement_*pairwise_matches.size() + 
-            8*pairwise_matches.size()*num_errs_per_measurement_) << endl;
-
-        //cout << num_params_per_cam_ << "  " << num_errs_per_measurement_ << endl;
-ise matching...");
+    LOGLN("Pairwise matching...");
 #if ENABLE_LOG
     t = getTickCount();
 #endif

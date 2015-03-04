@@ -1,4 +1,4 @@
-/*M///////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
 //
 //  IMPORTANT: READ BEFORE DOWNLOADING, COPYING, INSTALLING OR USING.
 //
@@ -39,7 +39,7 @@
 // the use of this software, even if advised of the possibility of such damage.
 //
 //
-//M*/
+//
 
 #include <iostream>
 #include <fstream>
@@ -57,9 +57,6 @@
 #include "opencv2/stitching/detail/util.hpp"
 #include "opencv2/stitching/detail/warpers.hpp"
 #include "opencv2/stitching/warpers.hpp"
-
-#include "opencv2/calib3d/calib3d_c.h"
-#include "opencv2/calib3d.hpp"
 
 using namespace std;
 using namespace cv;
@@ -149,8 +146,6 @@ string seam_find_type = "gc_color";
 int blend_type = Blender::MULTI_BAND;
 float blend_strength = 5;
 string result_name = "result.jpg";
-
-vector<Mat> imgs; //jchaves
 
 static int parseCmdArgs(int argc, char** argv)
 {
@@ -353,7 +348,7 @@ int main(int argc, char* argv[])
     int64 app_start_time = getTickCount();
 #endif
 
-    //cv::setBreakOnError(true);
+    cv::setBreakOnError(true);
 
     int retval = parseCmdArgs(argc, argv);
     if (retval)
@@ -433,7 +428,6 @@ int main(int argc, char* argv[])
             is_seam_scale_set = true;
         }
 
-        imgs.push_back(img.clone()); //jchaves
         (*finder)(img, features[i]);
         features[i].img_idx = i;
         LOGLN("Features in image #" << i+1 << ": " << features[i].keypoints.size());
@@ -457,75 +451,6 @@ int main(int argc, char* argv[])
     matcher(features, pairwise_matches);
     matcher.collectGarbage();
     LOGLN("Pairwise matching, time: " << ((getTickCount() - t) / getTickFrequency()) << " sec");
-
-    //jchaves
-    //Calculate Homography from feature matches, compare homography transformation to matched feature location
-    namedWindow("First image");
-    namedWindow("Second image");
-    for(int j = 0; j < pairwise_matches.size(); j++){
-        vector<DMatch> dmatches = pairwise_matches[j].matches; //vector<DMatch>
-        int src_idx = pairwise_matches[j].src_img_idx;
-        int dst_idx = pairwise_matches[j].dst_img_idx;
-        if (src_idx < 0 || dst_idx < 0) continue;  //was getting OutOfMemory errors w/o this
-
-        vector<Point2f> img1_points; //will be in order so that points are of corresponding matched features
-        vector<Point2f> img2_points;
-       
-        for(int m = 0; m < dmatches.size(); m++){
-            //Mat img1 = imgs[src_idx].clone();//start with a fresh image each time a new matching pair is plotted
-            //Mat img2 = imgs[dst_idx].clone();
-
-            int i1 = dmatches[m].queryIdx;
-            int i2 = dmatches[m].trainIdx;
-            CV_Assert(i1 >= 0 && i1 < static_cast<int>(features[src_idx].keypoints.size()));
-            CV_Assert(i2 >= 0 && i2 < static_cast<int>(features[dst_idx].keypoints.size()));
-
-            //circle(img1, features[src_idx].keypoints[i1].pt, 10, Scalar(0,0,255));
-            //circle(img2, features[dst_idx].keypoints[i2].pt, 10, Scalar(0,255,0));
-            //First, let's just see how the features match, then we'll try to estimate the Homography and transform from src to dst imgs with that
-            img1_points.push_back(features[src_idx].keypoints[i1].pt);
-            img2_points.push_back(features[dst_idx].keypoints[i2].pt);
-
-
-            //imshow("First image", img1); //these update the display after each pair of matching features is added
-            //imshow("Second image", img2);
-
-            //waitKey(2000);
-        }
-
-        //Now I have vectors of corresponding matched feature points
-        //Compute Homography
-        Mat H = findHomography(img1_points, img2_points, CV_RANSAC);
-        for(int m = 0; m < img1_points.size(); m++){
-            Mat img1 = imgs[src_idx].clone();
-            Mat img2 = imgs[dst_idx].clone();
-
-            circle(img1, img1_points[m], 10, Scalar(0,0,255));
-            circle(img2, img2_points[m], 10, Scalar(0,255,0));
-            double point_norm = (H.at<double>(2,0)*img1_points[m].x + H.at<double>(2,1)*img1_points[m].y + H.at<double>(2,2));
-            circle(img2, Point2f((H.at<double>(0,0)*img1_points[m].x + H.at<double>(0,1)*img1_points[m].y + H.at<double>(0,2))/point_norm , 
-                        (H.at<double>(1,0)*img1_points[m].x + H.at<double>(1,1)*img1_points[m].y + H.at<double>(1,2))/point_norm) ,
-                         10, Scalar(255,0,0));
-            //Try plotting the homography-xformed point both w/ and w/o normalizing the 3rd homogeneous coord of the output
-            //ie dividing the new x any by (H.at<double>(2,0)*img1_points[m].x + H.at<double>(2,1)*img1_points[m].y + H.at<double>(2,2))
-
-            //cout << "Homography H = " << endl << H << endl;
-            //cout << "first row = " << H.at<double>(0,0) << " " << H.at<double>(0,1) << " " << H.at<double>(0,2) << endl;
-
-            imshow("First image", img1);
-            imshow("Second image", img2);
-
-            waitKey(5000);
-
-        }
-
-
-        waitKey(); //needs user input
-    }
-
-    
-
-    ////////////////////////////////////////
 
     // Check if we should save matches graph
     if (save_graph)
